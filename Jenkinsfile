@@ -9,10 +9,12 @@ pipeline {
         sh 'git --version || true'
       }
     }
+  }
 
    stage('Setup Tools (no sudo)') {
-  steps {
+    steps {
     echo '公式Jenkinsイメージではsudo/aptは使いません（必要なら別手段へ）。'
+    }
   }
 }
 
@@ -63,3 +65,4 @@ stage('Package & Archive') {
     archiveArtifacts artifacts: 'artifact.txt,package.tgz,test-result.txt', fingerprint: true
   }
 }
+

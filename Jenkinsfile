@@ -10,21 +10,32 @@ pipeline {
       }
     }
 
-    stage('セットアップツール (sudo なし)') {
+    stage('Setup check') {
       steps {
-        echo '公式Jenkinsイメージでは sudo/apt は使いません（必要なら後述の方法で）。'
+        sh '''
+          set -eux
+          python3 -V
+          pip3 -V || true
+          shellcheck --version
+        '''
       }
     }
 
     stage('Lint (shellcheck)') {
       steps {
         sh '''
-          set -e
-          if [ -f scripts/healthcheck.sh ] && command -v shellcheck >/dev/null 2>&1; then
-            shellcheck scripts/healthcheck.sh
-          else
-            echo "[skip] shellcheck または scripts/healthcheck.sh が見つかりません"
-          fi
+          set -eux
+          # スクリプトが無いときはダミー作成（商談デモのため）
+          test -f scripts/healthcheck.sh || {
+            mkdir -p scripts
+            cat > scripts/healthcheck.sh <<'EOS'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "health OK"
+EOS
+            chmod +x scripts/healthcheck.sh
+          }
+          shellcheck scripts/healthcheck.sh
         '''
       }
     }
@@ -32,22 +43,26 @@ pipeline {
     stage('Test (pytest)') {
       steps {
         sh '''
-          set -e
-          if command -v python3 >/dev/null 2>&1; then
-            python3 -m venv .venv
-            . .venv/bin/activate
-            pip -q install --upgrade pip pytest
-            # テストが無いと pytest は exit 5 → 許容
-            pytest -q || test $? -eq 5
-          else
-            echo "[skip] python3 が見つかりません"
-          fi
-          echo OK > test-result.txt
+          set -eux
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install pytest
+          # テストが無いと exit 5 になるので、最低1件のダミーテストを用意
+          mkdir -p tests
+          python - <<'PY'
+from pathlib import Path
+p = Path('tests/test_smoke.py')
+if not p.exists():
+    p.write_text("def test_smoke():\n    assert 2+3==5\n")
+PY
+          # JUnit XML を生成して Jenkins の Test Result に渡す
+          pytest -q --maxfail=1 --disable-warnings --junitxml=pytest-report.xml
         '''
       }
       post {
         always {
-          junit allowEmptyResults: true, testResults: '**/junit*.xml'
+          junit allowEmptyResults: false, testResults: 'pytest-report.xml'
         }
       }
     }
@@ -62,20 +77,26 @@ pipeline {
     stage('Package & Archive') {
       steps {
         sh '''
-          set -e
+          set -eux
           mkdir -p app
           echo "build artifact" > artifact.txt
           tar czf package.tgz app artifact.txt
         '''
-        archiveArtifacts artifacts: 'artifact.txt,package.tgz,test-result.txt', fingerprint: true
+        archiveArtifacts artifacts: 'artifact.txt,package.tgz', fingerprint: true
       }
     }
 
     stage('Publish to Artifactory (dry-run)') {
-      when { expression { return env.ARTIFACTORY_URL && env.ARTIFACTORY_REPO && env.ARTIFACTORY_API_KEY } }
+      when {
+        allOf {
+          environment name: 'ARTIFACTORY_URL', value: ~/./
+          environment name: 'ARTIFACTORY_REPO', value: ~/./
+          environment name: 'ARTIFACTORY_API_KEY', value: ~/./
+        }
+      }
       steps {
         sh '''
-          set -e
+          set -eux
           curl -H "X-JFrog-Art-Api: ${ARTIFACTORY_API_KEY}" \
                -T package.tgz \
                "${ARTIFACTORY_URL}/artifactory/${ARTIFACTORY_REPO}/ci-demo/package.tgz"

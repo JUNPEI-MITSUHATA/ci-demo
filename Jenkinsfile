@@ -25,16 +25,17 @@ pipeline {
       steps {
         sh '''
           set -eux
-          # スクリプトが無いときはダミー作成（商談デモのため）
-          test -f scripts/healthcheck.sh || {
+          # デモ用: スクリプトが無ければ作成
+          if [ ! -f scripts/healthcheck.sh ]; then
             mkdir -p scripts
-            cat > scripts/healthcheck.sh <<'EOS'
+            cat > scripts/healthcheck.sh <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "health OK"
-EOS
+EOF
             chmod +x scripts/healthcheck.sh
-          }
+          fi
+
           shellcheck scripts/healthcheck.sh
         '''
       }
@@ -44,19 +45,23 @@ EOS
       steps {
         sh '''
           set -eux
+
+          # venv 構築
           python3 -m venv .venv
           . .venv/bin/activate
           pip install --upgrade pip
           pip install pytest
-          # テストが無いと exit 5 になるので、最低1件のダミーテストを用意
+
+          # デモ用: テストが無ければ作成
           mkdir -p tests
-          python - <<'PY'
-from pathlib import Path
-p = Path('tests/test_smoke.py')
-if not p.exists():
-    p.write_text("def test_smoke():\n    assert 2+3==5\n")
-PY
-          # JUnit XML を生成して Jenkins の Test Result に渡す
+          if [ ! -f tests/test_smoke.py ]; then
+            cat > tests/test_smoke.py <<'EOF'
+def test_smoke():
+    assert 2 + 3 == 5
+EOF
+          fi
+
+          # JUnit XML を必ず出力
           pytest -q --maxfail=1 --disable-warnings --junitxml=pytest-report.xml
         '''
       }
@@ -71,6 +76,7 @@ PY
       when { expression { return fileExists('Dockerfile') } }
       steps {
         echo 'skip: Docker build is optional in this demo'
+        // Docker build をしたい場合は、実行ノードに Docker 実行環境が必要です。
       }
     }
 
@@ -88,10 +94,8 @@ PY
 
     stage('Publish to Artifactory (dry-run)') {
       when {
-        allOf {
-          environment name: 'ARTIFACTORY_URL', value: ~/./
-          environment name: 'ARTIFACTORY_REPO', value: ~/./
-          environment name: 'ARTIFACTORY_API_KEY', value: ~/./
+        expression {
+          return env.ARTIFACTORY_URL?.trim() && env.ARTIFACTORY_REPO?.trim() && env.ARTIFACTORY_API_KEY?.trim()
         }
       }
       steps {
@@ -106,6 +110,8 @@ PY
   }
 
   post {
-    always { echo 'Pipeline finished.' }
+    always {
+      echo 'Pipeline finished.'
+    }
   }
 }

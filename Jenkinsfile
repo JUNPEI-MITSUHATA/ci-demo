@@ -2,6 +2,7 @@ pipeline {
   agent any
   options { timestamps() }
 
+
   stages {
       stage('Check AWS Auth') {
         steps {
@@ -10,9 +11,7 @@ pipeline {
           }
         }
       }
-    }
 
-  stages {
     stage('Checkout') {
       steps {
         checkout scm

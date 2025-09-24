@@ -3,6 +3,16 @@ pipeline {
   options { timestamps() }
 
   stages {
+      stage('Check AWS Auth') {
+        steps {
+          withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
+            sh 'aws sts get-caller-identity'
+          }
+        }
+      }
+    }
+
+  stages {
     stage('Checkout') {
       steps {
         checkout scm

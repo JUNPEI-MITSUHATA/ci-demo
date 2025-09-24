@@ -115,3 +115,26 @@ EOF
     }
   }
 }
+
+stage('Build with Makefile') {
+ steps {
+   sh '''
+     set -eux
+     make clean || true
+     make
+     ./hello
+   '''
+ }
+}
+
+stage('Package & Archive') {
+  steps {
+    sh '''
+      set -e
+      mkdir -p app
+      echo "build artifact" > artifact.txt
+      tar czf package.tgz app artifact.txt
+    '''
+    archiveArtifacts artifacts: 'artifact.txt,package.tgz,test-result.txt', fingerprint: true
+  }
+}

@@ -172,17 +172,45 @@ EOF
       steps {
         input message: 'Destroy AWS resources?', ok: 'Destroy'
         withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
-          dir('tf/aws') {
-            sh '''
-              set -eux
-              # plan時に保存したバケット名を使って破棄（同じリソースを確実に指定）
-              BUCKET_NAME="$(cat .bucket_name)"
-              terraform destroy -auto-approve \
-                -var="aws_region=${AWS_REGION}" \
-                -var="bucket_name=${BUCKET_NAME}"
-            '''
-          }
-        }
+        dir('tf/aws') {
+  sh '''
+    set -eux
+
+    # 既存の計画と名前をクリア
+    rm -f tfplan .bucket_name || true
+
+    # ── バケット名を安全に生成 ─────────────────────────────
+    # ベース：ジョブ名＋ビルド番号を小文字化、英数とハイフン以外をハイフン化
+    BASE="$(echo "${JOB_NAME}-${BUILD_NUMBER}" \
+      | tr '[:upper:]' '[:lower:]' \
+      | tr -cs 'a-z0-9-' '-' \
+      | sed -E 's/^-+//; s/-+$//; s/--+/-/g')"
+
+    # 一意性確保のためにUNIX時刻の短縮サフィックスを付与
+    SUFFIX="$(date +%s)"
+
+    CANDIDATE="ci-demo-${BASE}-${SUFFIX}"
+
+    # 63文字に詰める（S3仕様）。先頭・末尾のハイフンも除去
+    BUCKET_NAME="$(echo "$CANDIDATE" | cut -c1-63 | sed -E 's/^-+//; s/-+$//')"
+
+    # 最低3文字を満たさない/空になった場合の保険
+    if [ ${#BUCKET_NAME} -lt 3 ]; then
+      BUCKET_NAME="ci-demo-${SUFFIX}"
+    fi
+
+    echo "${BUCKET_NAME}" | tee .bucket_name
+    # ────────────────────────────────────────────────
+
+    terraform init -input=false
+    terraform fmt -check
+    terraform validate
+    terraform plan -input=false -out=tfplan \
+      -var="aws_region=ap-northeast-1" \
+      -var="bucket_name=${BUCKET_NAME}"
+  '''
+}
+	}
       }
     }
 

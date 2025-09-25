@@ -104,6 +104,87 @@ EOF
       }
     }
 
+  // ───────────── Terraform ステージ（ここから） ─────────────
+
+    stage('Terraform Init & Plan') {
+      environment {
+        AWS_REGION = 'ap-northeast-1'
+      }
+      steps {
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
+          dir('tf/aws') {
+            sh '''
+              set -eux
+
+              # ビルド内で一貫したバケット名（衝突回避・秒を使わない）
+              BUCKET_NAME="ci-demo-$(echo "${JOB_NAME}" | tr ' ' '-')-${BUILD_NUMBER}"
+              echo "${BUCKET_NAME}" > .bucket_name
+
+              terraform init -input=false
+              terraform fmt -check
+              terraform validate
+              terraform plan -input=false -out=tfplan \
+                -var="aws_region=${AWS_REGION}" \
+                -var="bucket_name=${BUCKET_NAME}"
+            '''
+          }
+        }
+      }
+      post {
+        success {
+          archiveArtifacts artifacts: 'tf/aws/tfplan,tf/aws/.bucket_name', fingerprint: true
+        }
+      }
+    }
+
+    stage('Terraform Apply (manual)') {
+      when { expression { return params.TF_ACTION == 'apply' } }
+      steps {
+        input message: 'Apply Terraform changes to AWS?', ok: 'Proceed'
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
+          dir('tf/aws') {
+            sh '''
+              set -eux
+              # plan で固定した値を含む tfplan をそのまま適用（再計算しない）
+              test -f tfplan
+              terraform apply -input=false tfplan
+              terraform output -json | tee tf-output.json || true
+            '''
+          }
+        }
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'tf/aws/tf-output.json', fingerprint: true
+        }
+      }
+    }
+
+    stage('Terraform Destroy (manual)') {
+      when { expression { return params.TF_ACTION == 'destroy' } }
+      environment {
+        AWS_REGION = 'ap-northeast-1'
+      }
+      steps {
+        input message: 'Destroy AWS resources?', ok: 'Destroy'
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
+          dir('tf/aws') {
+            sh '''
+              set -eux
+              # plan時に保存したバケット名を使って破棄（同じリソースを確実に指定）
+              BUCKET_NAME="$(cat .bucket_name)"
+              terraform destroy -auto-approve \
+                -var="aws_region=${AWS_REGION}" \
+                -var="bucket_name=${BUCKET_NAME}"
+            '''
+          }
+        }
+      }
+    }
+
+    // ───────────── Terraform ステージ（ここまで） ─────────────
+
+
     stage('Package & Archive') {
       steps {
         sh '''

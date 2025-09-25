@@ -2,6 +2,10 @@ pipeline {
   agent any
   options { timestamps() }
 
+  parameters {
+    choice(name: 'TF_ACTION', choices: ['', 'apply', 'destroy'],
+           description: 'Terraform action (empty=Plan only)')
+  }
 
   stages {
       stage('Check AWS Auth') {

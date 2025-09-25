@@ -120,26 +120,35 @@ EOF
             sh '''
               set -eux
 
-              # ビルド内で一貫したバケット名（衝突回避・秒を使わない）
-              BUCKET_NAME="ci-demo-$(echo "${JOB_NAME}" | tr ' ' '-')-${BUILD_NUMBER}"
-              echo "${BUCKET_NAME}" > .bucket_name
+         	 # バケット名を小文字化＋不正文字をハイフンに変換
+         	 BASE="$(echo "${JOB_NAME}-${BUILD_NUMBER}" \
+         	   | tr '[:upper:]' '[:lower:]' \
+         	   | tr -cs 'a-z0-9-' '-' \
+         	   | sed -E 's/^-+//; s/-+$//; s/--+/-/g')"
 
-              terraform init -input=false
-              terraform fmt -check
-              terraform validate
-              terraform plan -input=false -out=tfplan \
-                -var="aws_region=${AWS_REGION}" \
-                -var="bucket_name=${BUCKET_NAME}"
-            '''
-          }
-        }
-      }
-      post {
-        success {
-          archiveArtifacts artifacts: 'tf/aws/tfplan,tf/aws/.bucket_name', fingerprint: true
-        }
-      }
-    }
+        	  # 63文字制限に収める
+        	  BUCKET_NAME="ci-demo-${BASE}"
+        	  BUCKET_NAME="$(echo "$BUCKET_NAME" | cut -c1-63)"
+
+        	  echo "${BUCKET_NAME}" > .bucket_name
+        	  echo "Using bucket: $BUCKET_NAME"
+
+         	 terraform init -input=false
+         	 terraform fmt -check
+         	 terraform validate
+         	 terraform plan -input=false -out=tfplan \
+         	   -var="aws_region=${AWS_REGION}" \
+         	   -var="bucket_name=${BUCKET_NAME}"
+       		 '''
+    	      }
+   	    }
+ 	  }
+ 	 post {
+ 	   success {
+ 	     archiveArtifacts artifacts: 'tf/aws/tfplan,tf/aws/.bucket_name', fingerprint: true
+  	  }
+ 	 }
+	}
 
     stage('Terraform Apply (manual)') {
       when { expression { return params.TF_ACTION == 'apply' } }
